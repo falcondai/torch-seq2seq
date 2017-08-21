@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 from __future__ import absolute_import, division, print_function
 from six.moves import xrange
 
@@ -14,12 +16,7 @@ import torch.nn as nn
 import torch.nn.functional as f
 from torch.autograd import Variable
 import tqdm
-# Tensorflow imports for writing summaries
-try:
-    from tensorflow import summary, Summary
-    from tensorflow.contrib.util import make_tensor_proto
-except:
-    logger.warn('tensorflow cannot be imported')
+
 
 class Net(nn.Module):
     def __init__(self):
@@ -35,21 +32,46 @@ class Net(nn.Module):
 
 
 if __name__ == '__main__':
-    import argparse, sys
+    import argparse
+
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-b', '--batch-size', type=int, default=256, help='Batch size for computations.')
     parser.add_argument('-n', '--n-epochs', type=int, default=6, help='Epochs to train.')
     parser.add_argument('-l', '--log-dir', default='/tmp', help='Log directory path.')
     parser.add_argument('-v', '--verbose', dest='log_level', action='store_const', default=logging.INFO, const=logging.DEBUG, help='Display more log messages.')
+    parser.add_argument('-g', '--gpus', nargs='+', default=[], type=int, help='GPUs to be used in computation.')
+    parser.add_argument('-s', '--seed', type=int, default=None, help='Manual random seed.')
+    parser.add_argument('--no-summary', dest='write_summary', action='store_false', help='Write Summary protobuf for TensorBoard visualizations. (Requires TensorFlow)')
 
     args = parser.parse_args()
 
     # Set the logging level
     logger.setLevel(args.log_level)
 
+    # Tensorflow imports for writing summaries
+    try:
+        from tensorflow import summary, Summary
+        from tensorflow.contrib.util import make_tensor_proto
+    except:
+        logger.warn('TensorFlow cannot be imported. TensorBoard summaries will not be generated.')
+        args.write_summary = False
+
+    # Set random seeds
+    if args.seed is not None:
+        logger.info('random seed is set to %i', args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+    else:
+        logger.warn('random seed is not set.')
+
     # Define the model
-    net = Net().cuda()
-    # net = nn.DataParallel(net, [0, 1])
+    net = Net()
+    if len(args.gpus) > 0:
+        logger.info('using GPUs %s', args.gpus)
+        net = net.cuda()
+        if len(args.gpus) > 1:
+            net = nn.DataParallel(net, args.gpus)
 
     logger.info(net)
     logger.info('model parameters:')
@@ -70,25 +92,28 @@ if __name__ == '__main__':
     loss_fn = nn.CrossEntropyLoss()
     optimizer = optim.Adam(net.parameters(), lr=0.001)
 
-    # Summary
-    writer = summary.FileWriter(args.log_dir, flush_secs=10)
+    # Summary writer
+    if args.write_summary:
+        writer = summary.FileWriter(args.log_dir, flush_secs=10)
 
     # Train for a few epochs
     step = 0
     for i in xrange(args.n_epochs):
+        logger.info('epoch %i', i)
         for batch in tqdm.tqdm(train_loader):
             optimizer.zero_grad()
             # Build a mini-batch
             imgs, labels = batch
-            imgs = Variable(imgs.cuda())
-            # labels.random_(10)
-            labels = Variable(labels.cuda())
+            if len(args.gpus) > 0:
+                imgs, labels = imgs.cuda(), labels.cuda()
+            imgs, labels = Variable(imgs), Variable(labels)
 
             preds = net(imgs)
             loss = loss_fn(preds, labels)
             loss.backward()
-            summary_proto = Summary(value=[Summary.Value(tag='train/loss', simple_value=loss.data.cpu().numpy()[0])])
-            writer.add_summary(summary_proto, global_step=step)
+            if args.write_summary:
+                summary_proto = Summary(value=[Summary.Value(tag='train/loss', simple_value=loss.data.cpu().numpy()[0])])
+                writer.add_summary(summary_proto, global_step=step)
 
             step += 1
             optimizer.step()
@@ -97,12 +122,15 @@ if __name__ == '__main__':
         n_correct = 0.
         for batch in tqdm.tqdm(test_loader):
             imgs, labels = batch
-            imgs = Variable(imgs.cuda())
-            labels = Variable(labels.cuda())
+            if len(args.gpus) > 0:
+                imgs, labels = imgs.cuda(), labels.cuda()
+            imgs, labels = Variable(imgs), Variable(labels)
 
             _, preds = net(imgs).max(1)
             n_correct += preds.eq(labels).float().sum().data.cpu().numpy()[0]
         accuracy = n_correct / len(test_pairs)
         logger.info('test accuracy %g', accuracy)
-        writer.add_summary(Summary(value=[Summary.Value(tag='test/accuracy', simple_value=accuracy)]), global_step=i)
-    writer.close()
+        if args.write_summary:
+            writer.add_summary(Summary(value=[Summary.Value(tag='test/accuracy', simple_value=accuracy)]), global_step=i)
+    if args.write_summary:
+        writer.close()
