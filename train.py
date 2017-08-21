@@ -119,7 +119,7 @@ if __name__ == '__main__':
             optimizer.step()
 
         # Evaluate on test
-        n_correct = 0.
+        n_correct = 0
         for batch in tqdm.tqdm(test_loader):
             imgs, labels = batch
             if len(args.gpus) > 0:
@@ -127,7 +127,7 @@ if __name__ == '__main__':
             imgs, labels = Variable(imgs), Variable(labels)
 
             _, preds = net(imgs).max(1)
-            n_correct += preds.eq(labels).float().sum().data.cpu().numpy()[0]
+            n_correct += preds.eq(labels).int().sum().data.cpu().numpy()[0]
         accuracy = n_correct / len(test_pairs)
         logger.info('test accuracy %g', accuracy)
         if args.write_summary:
