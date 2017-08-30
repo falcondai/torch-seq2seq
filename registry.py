@@ -1,5 +1,5 @@
 problem_registry = {}
-method_registry = {}
+model_registry = {}
 optimizer_registry = {}
 
 def add_to_registry(registry):
@@ -11,4 +11,4 @@ def add_to_registry(registry):
     return register
 
 register_problem = add_to_registry(problem_registry)
-register_method = add_to_registry(method_registry)
+register_model = add_to_registry(model_registry)

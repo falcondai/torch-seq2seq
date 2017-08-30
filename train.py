@@ -18,21 +18,11 @@ import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as f
 from torch.autograd import Variable
-from registry import problem_registry
+
+# Load problem and model registries
+from registry import problem_registry, model_registry
 import problems
-
-
-class Net(nn.Module):
-    def __init__(self):
-        super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(1, 20, 5)
-        self.linear = nn.Linear(20 * 24 * 24, 10)
-
-    def forward(self, x):
-        x = f.relu(self.conv1(x))
-        x = x.view(-1, 20 * 24 * 24)
-        x = self.linear(x)
-        return x
+import models
 
 
 if __name__ == '__main__':
@@ -42,7 +32,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('-p', '--problem', required=True, help='Problem to solve.')
-    # parser.add_argument('-m', '--model', required=True, help='Model to use.')
+    parser.add_argument('-m', '--model', required=True, help='Model to use.')
 
     parser.add_argument('-b', '--batch-size', type=int, default=256, help='Batch size for computations.')
     parser.add_argument('-n', '--n-epochs', type=int, default=6, help='Epochs to train.')
@@ -84,8 +74,13 @@ if __name__ == '__main__':
         os.makedirs(args.log_dir)
 
     # Initialize training
+    # Define problem
+    problem = problem_registry[args.problem]()
+    logger.info('# train samples: %i', problem.specs['train_size'])
+    logger.info('# validation samples: %i', problem.specs['val_size'])
+
     # Define the model
-    net = Net()
+    net = model_registry[args.model](problem.specs['input_shape'], [problem.specs['output_classes']])
     optimizer = optim.Adam(net.parameters(), lr=0.001)
     epoch, step = 0, 0
     # Load saved checkpoint
@@ -113,10 +108,6 @@ if __name__ == '__main__':
         n_params += param.nelement()
         logger.info('%s | %r | %i', name, param.size(), param.nelement())
     logger.info('# parameters: %i', n_params)
-
-    problem = problem_registry[args.problem]()
-    logger.info('# train samples: %i', problem.specs['train_size'])
-    logger.info('# validation samples: %i', problem.specs['val_size'])
 
     train_loader = problem.get_train_loader(args.batch_size)
     val_loader = problem.get_val_loader(args.batch_size)

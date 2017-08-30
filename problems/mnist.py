@@ -9,6 +9,7 @@ _data_root_path = 'data'
 @register_problem
 class MNIST:
     def __init__(self):
+        # TODO postpone data preprocessing
         self._data_path = os.path.join(_data_root_path, self.__class__.__name__)
         self.train_pairs = tv.datasets.MNIST(root=self._data_path, train=True, download=True, transform=tv.transforms.ToTensor())
         self.val_pairs = tv.datasets.MNIST(root=self._data_path, train=False, download=True, transform=tv.transforms.ToTensor())
