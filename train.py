@@ -83,6 +83,7 @@ if __name__ == '__main__':
         optimizer.load_state_dict(checkpoint['optimizer'])
         epoch = checkpoint['epoch']
         step = checkpoint['step']
+        logger.info('resuming from epoch %i step %i', epoch, step)
 
     # GPU or not
     if len(args.gpus) > 0:
@@ -113,12 +114,12 @@ if __name__ == '__main__':
     if args.write_summary:
         writer = summary.FileWriter(args.log_dir, flush_secs=10)
 
-    # Train for a few epochs
-    if args.n_epochs <= epoch:
+    if args.n_epochs <= epoch + 1:
         logger.warn('too few epochs to train')
 
+    # Training loop
     while epoch < args.n_epochs:
-        logger.info('epoch %i', epoch)
+        logger.info('starting epoch %i', epoch)
         for batch in tqdm.tqdm(train_loader):
             optimizer.zero_grad()
             # Build a mini-batch
@@ -155,11 +156,11 @@ if __name__ == '__main__':
         if args.write_summary:
             writer.add_summary(Summary(value=[Summary.Value(tag='test/accuracy', simple_value=accuracy)]), global_step=epoch)
 
+        epoch += 1
         # Save training checkpoints
         checkpoint = make_checkpoint(epoch, step, optimizer, net)
         torch.save(checkpoint, os.path.join(args.log_dir, 'model_%.4f_e%i.pt' % (accuracy, epoch)))
 
-        epoch += 1
 
     if args.write_summary:
         writer.close()
