@@ -18,6 +18,8 @@ import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as f
 from torch.autograd import Variable
+from registry import problem_registry
+import problems
 
 
 class Net(nn.Module):
@@ -38,16 +40,21 @@ if __name__ == '__main__':
 
 
     parser = argparse.ArgumentParser()
+
+    parser.add_argument('-p', '--problem', required=True, help='Problem to solve.')
+    # parser.add_argument('-m', '--model', required=True, help='Model to use.')
+
     parser.add_argument('-b', '--batch-size', type=int, default=256, help='Batch size for computations.')
     parser.add_argument('-n', '--n-epochs', type=int, default=6, help='Epochs to train.')
-    parser.add_argument('-l', '--log-dir', default='/tmp', help='Log directory path.')
-    parser.add_argument('-v', '--verbose', dest='log_level', action='store_const', default=logging.INFO, const=logging.DEBUG, help='Display more log messages.')
-    parser.add_argument('-g', '--gpus', nargs='+', default=[], type=int, help='GPUs to be used in computation.')
-    parser.add_argument('-s', '--seed', type=int, default=None, help='Manual random seed.')
-    parser.add_argument('--no-summary', dest='write_summary', action='store_false', help='Write Summary protobuf for TensorBoard visualizations. (Requires TensorFlow)')
-    parser.add_argument('-r', '--resume', help='Resume training from a saved checkpoint.')
 
-    args = parser.parse_args()
+    parser.add_argument('-s', '--seed', type=int, default=None, help='Manual random seed.')
+    parser.add_argument('-g', '--gpus', nargs='+', default=[], type=int, help='GPUs to be used in computation.')
+    parser.add_argument('-l', '--log-dir', default='/tmp', help='Log directory path.')
+    parser.add_argument('-r', '--resume', help='Resume training from a saved checkpoint.')
+    parser.add_argument('-v', '--verbose', dest='log_level', action='store_const', default=logging.INFO, const=logging.DEBUG, help='Display more log messages.')
+    parser.add_argument('--no-summary', dest='write_summary', action='store_false', help='Write Summary protobuf for TensorBoard visualizations. (Requires TensorFlow)')
+
+    args, extra_args = parser.parse_known_args()
 
     # Set the logging level
     logger.setLevel(args.log_level)
@@ -59,7 +66,7 @@ if __name__ == '__main__':
         from tensorflow import summary, Summary
         from tensorflow.contrib.util import make_tensor_proto
         logger.debug('imported TensorFlow.')
-    except:
+    except ImportError:
         logger.warn('TensorFlow cannot be imported. TensorBoard summaries will not be generated. Consider to install CPU-version TensorFlow.')
         args.write_summary = False
 
@@ -102,18 +109,17 @@ if __name__ == '__main__':
     logger.info(net)
     logger.info('model parameters:')
     n_params = 0
-    for param in net.parameters():
+    for name, param in net.named_parameters():
         n_params += param.nelement()
-        logger.info((param.size(), param.nelement()))
+        logger.info('%s | %r | %i', name, param.size(), param.nelement())
     logger.info('# parameters: %i', n_params)
 
-    train_pairs = tv.datasets.MNIST(root='/tmp/mnist', train=True, download=True, transform=tv.transforms.ToTensor())
-    train_loader = torch.utils.data.DataLoader(train_pairs, batch_size=args.batch_size, shuffle=True)
-    logger.info('# train samples: %i', len(train_pairs))
+    problem = problem_registry[args.problem]()
+    logger.info('# train samples: %i', problem.specs['train_size'])
+    logger.info('# validation samples: %i', problem.specs['val_size'])
 
-    test_pairs = tv.datasets.MNIST(root='/tmp/mnist', train=False, download=True, transform=tv.transforms.ToTensor())
-    test_loader = torch.utils.data.DataLoader(test_pairs, batch_size=args.batch_size, shuffle=False)
-    logger.info('# test samples: %i', len(test_pairs))
+    train_loader = problem.get_train_loader(args.batch_size)
+    val_loader = problem.get_val_loader(args.batch_size)
 
     loss_fn = nn.CrossEntropyLoss()
 
@@ -156,7 +162,7 @@ if __name__ == '__main__':
 
         # Evaluate on test
         n_correct = 0
-        for batch in tqdm.tqdm(test_loader):
+        for batch in tqdm.tqdm(val_loader):
             imgs, labels = batch
             if len(args.gpus) > 0:
                 imgs, labels = imgs.cuda(), labels.cuda()
@@ -164,7 +170,7 @@ if __name__ == '__main__':
 
             _, preds = net(imgs).max(1)
             n_correct += preds.eq(labels).float().sum().data[0]
-        accuracy = n_correct / len(test_pairs)
+        accuracy = n_correct / problem.specs['test_size']
         logger.info('epoch %i test accuracy %g', epoch, accuracy)
 
         # Write validation summary
