@@ -52,13 +52,16 @@ if __name__ == '__main__':
 
     # Set the logging level
     logger.setLevel(args.log_level)
+    # Debug information
+    logger.debug('torch version %s', torch.__version__)
 
     # Tensorflow imports for writing summaries
     try:
         from tensorflow import summary, Summary
         from tensorflow.contrib.util import make_tensor_proto
+        logger.debug('imported TensorFlow.')
     except:
-        logger.warn('TensorFlow cannot be imported. TensorBoard summaries will not be generated.')
+        logger.warn('TensorFlow cannot be imported. TensorBoard summaries will not be generated. Consider to install CPU-version TensorFlow.')
         args.write_summary = False
 
     # Set random seeds
@@ -68,6 +71,11 @@ if __name__ == '__main__':
         torch.manual_seed(args.seed)
     else:
         logger.warn('random seed is not set.')
+
+    # Chores before training
+    if not os.path.exists(args.log_dir):
+        logger.debug('create log directory %s', args.log_dir)
+        os.makedirs(args.log_dir)
 
     # Initialize training
     # Define the model
@@ -114,7 +122,7 @@ if __name__ == '__main__':
     if args.write_summary:
         writer = summary.FileWriter(args.log_dir, flush_secs=10)
 
-    if args.n_epochs <= epoch + 1:
+    if args.n_epochs <= epoch:
         logger.warn('too few epochs to train')
 
     # Training loop
@@ -132,7 +140,7 @@ if __name__ == '__main__':
             loss = loss_fn(preds, labels)
             loss.backward()
             if args.write_summary:
-                summary_proto = Summary(value=[Summary.Value(tag='train/loss', simple_value=loss.data.cpu().numpy()[0])])
+                summary_proto = Summary(value=[Summary.Value(tag='train/loss', simple_value=loss.data[0])])
                 writer.add_summary(summary_proto, global_step=step)
 
             # Update parameters
@@ -148,7 +156,7 @@ if __name__ == '__main__':
             imgs, labels = Variable(imgs), Variable(labels)
 
             _, preds = net(imgs).max(1)
-            n_correct += preds.eq(labels).int().sum().data.cpu().numpy()[0]
+            n_correct += preds.eq(labels).float().sum().data[0]
         accuracy = n_correct / len(test_pairs)
         logger.info('epoch %i test accuracy %g', epoch, accuracy)
 
@@ -160,7 +168,6 @@ if __name__ == '__main__':
         # Save training checkpoints
         checkpoint = make_checkpoint(epoch, step, optimizer, net)
         torch.save(checkpoint, os.path.join(args.log_dir, 'model_%.4f_e%i.pt' % (accuracy, epoch)))
-
 
     if args.write_summary:
         writer.close()
