@@ -3,11 +3,15 @@
 from __future__ import absolute_import, division, print_function
 from six.moves import xrange
 
-from util import logging, tt
+from util import logging, tt, make_checkpoint
 logger = logging.getLogger('train')
 logger.setLevel(logging.INFO)
 
+import os
 import numpy as np
+import tqdm
+
+# Torch imports
 import torch
 import torchvision as tv
 import torch.multiprocessing as mp
@@ -15,7 +19,6 @@ import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as f
 from torch.autograd import Variable
-import tqdm
 
 
 class Net(nn.Module):
@@ -43,6 +46,7 @@ if __name__ == '__main__':
     parser.add_argument('-g', '--gpus', nargs='+', default=[], type=int, help='GPUs to be used in computation.')
     parser.add_argument('-s', '--seed', type=int, default=None, help='Manual random seed.')
     parser.add_argument('--no-summary', dest='write_summary', action='store_false', help='Write Summary protobuf for TensorBoard visualizations. (Requires TensorFlow)')
+    parser.add_argument('-r', '--resume', help='Resume training from a saved checkpoint.')
 
     args = parser.parse_args()
 
@@ -65,8 +69,22 @@ if __name__ == '__main__':
     else:
         logger.warn('random seed is not set.')
 
+    # Initialize training
     # Define the model
     net = Net()
+    optimizer = optim.Adam(net.parameters(), lr=0.001)
+    epoch, step = 0, 0
+    # Load saved checkpoint
+    if args.resume:
+        logger.info('resuming from checkpoint %s', args.resume)
+        checkpoint = torch.load(args.resume)
+        logger.debug('checkpoint keys: %r', checkpoint.keys())
+        net.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        epoch = checkpoint['epoch']
+        step = checkpoint['step']
+
+    # GPU or not
     if len(args.gpus) > 0:
         logger.info('using GPUs %s', args.gpus)
         net = net.cuda()
@@ -90,16 +108,17 @@ if __name__ == '__main__':
     logger.info('# test samples: %i', len(test_pairs))
 
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(net.parameters(), lr=0.001)
 
     # Summary writer
     if args.write_summary:
         writer = summary.FileWriter(args.log_dir, flush_secs=10)
 
     # Train for a few epochs
-    step = 0
-    for i in xrange(args.n_epochs):
-        logger.info('epoch %i', i)
+    if args.n_epochs <= epoch:
+        logger.warn('too few epochs to train')
+
+    while epoch < args.n_epochs:
+        logger.info('epoch %i', epoch)
         for batch in tqdm.tqdm(train_loader):
             optimizer.zero_grad()
             # Build a mini-batch
@@ -115,6 +134,7 @@ if __name__ == '__main__':
                 summary_proto = Summary(value=[Summary.Value(tag='train/loss', simple_value=loss.data.cpu().numpy()[0])])
                 writer.add_summary(summary_proto, global_step=step)
 
+            # Update parameters
             step += 1
             optimizer.step()
 
@@ -129,8 +149,17 @@ if __name__ == '__main__':
             _, preds = net(imgs).max(1)
             n_correct += preds.eq(labels).int().sum().data.cpu().numpy()[0]
         accuracy = n_correct / len(test_pairs)
-        logger.info('test accuracy %g', accuracy)
+        logger.info('epoch %i test accuracy %g', epoch, accuracy)
+
+        # Write summaries
         if args.write_summary:
-            writer.add_summary(Summary(value=[Summary.Value(tag='test/accuracy', simple_value=accuracy)]), global_step=i)
+            writer.add_summary(Summary(value=[Summary.Value(tag='test/accuracy', simple_value=accuracy)]), global_step=epoch)
+
+        # Save training checkpoints
+        checkpoint = make_checkpoint(epoch, step, optimizer, net)
+        torch.save(checkpoint, os.path.join(args.log_dir, 'model_%.4f_e%i.pt' % (accuracy, epoch)))
+
+        epoch += 1
+
     if args.write_summary:
         writer.close()

@@ -14,3 +14,13 @@ if torch.cuda.is_available():
 else:
     logger.info('CUDA devices are not available')
     import torch as tt
+
+def make_checkpoint(epoch, step, optimizer, model, extra={}):
+    '''Save a dictionary containing complete training state'''
+    return {
+        'epoch': epoch,
+        'step': step,
+        'optimizer': optimizer.state_dict(),
+        'model': model.state_dict(),
+        'extra': extra,
+    }
