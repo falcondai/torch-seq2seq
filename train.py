@@ -3,9 +3,8 @@
 from __future__ import absolute_import, division, print_function
 from six.moves import xrange
 
-from util import logging, tt, make_checkpoint
+from util import logging, make_checkpoint, global_norm
 logger = logging.getLogger('train')
-logger.setLevel(logging.INFO)
 
 import os
 import numpy as np
@@ -139,8 +138,16 @@ if __name__ == '__main__':
             preds = net(imgs)
             loss = loss_fn(preds, labels)
             loss.backward()
+
+            # Write training summary
             if args.write_summary:
-                summary_proto = Summary(value=[Summary.Value(tag='train/loss', simple_value=loss.data[0])])
+                param_norm = global_norm(net.parameters())
+                grad_norm = global_norm([param.grad for param in net.parameters()])
+                summary_proto = Summary(value=[
+                    Summary.Value(tag='train/loss', simple_value=loss.data[0]),
+                    Summary.Value(tag='train/param_norm', simple_value=param_norm.data[0]),
+                    Summary.Value(tag='train/grad_norm', simple_value=grad_norm.data[0]),
+                    ])
                 writer.add_summary(summary_proto, global_step=step)
 
             # Update parameters
@@ -160,7 +167,7 @@ if __name__ == '__main__':
         accuracy = n_correct / len(test_pairs)
         logger.info('epoch %i test accuracy %g', epoch, accuracy)
 
-        # Write summaries
+        # Write validation summary
         if args.write_summary:
             writer.add_summary(Summary(value=[Summary.Value(tag='test/accuracy', simple_value=accuracy)]), global_step=epoch)
 
