@@ -43,6 +43,7 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--resume', help='Resume training from a saved checkpoint.')
     parser.add_argument('-v', '--verbose', dest='log_level', action='store_const', default=logging.INFO, const=logging.DEBUG, help='Display more log messages.')
     parser.add_argument('--no-summary', dest='write_summary', action='store_false', help='Write Summary protobuf for TensorBoard visualizations. (Requires TensorFlow)')
+    parser.add_argument('-i', '--report-interval', default=1, type=int, help='How many minibatches to skip before writing Summary protobuf during training.')
 
     args, extra_args = parser.parse_known_args()
 
@@ -123,7 +124,7 @@ if __name__ == '__main__':
 
     # Training loop
     while epoch < args.n_epochs:
-        logger.info('starting epoch %i', epoch)
+        logger.info('starting epoch %i', epoch + 1)
         for batch in tqdm.tqdm(train_loader):
             optimizer.zero_grad()
             # Build a mini-batch
@@ -137,7 +138,7 @@ if __name__ == '__main__':
             loss.backward()
 
             # Write training summary
-            if args.write_summary:
+            if args.write_summary and step % args.report_interval == 0:
                 param_norm = global_norm(net.parameters())
                 grad_norm = global_norm([param.grad for param in net.parameters()])
                 summary_proto = Summary(value=[
@@ -145,11 +146,13 @@ if __name__ == '__main__':
                     Summary.Value(tag='train/param_norm', simple_value=param_norm.data[0]),
                     Summary.Value(tag='train/grad_norm', simple_value=grad_norm.data[0]),
                     ])
-                writer.add_summary(summary_proto, global_step=step)
+                writer.add_summary(summary_proto, global_step=step * args.batch_size)
 
             # Update parameters
-            step += 1
             optimizer.step()
+            step += 1
+
+        epoch += 1
 
         # Evaluate on test
         n_correct = 0
@@ -166,9 +169,10 @@ if __name__ == '__main__':
 
         # Write validation summary
         if args.write_summary:
-            writer.add_summary(Summary(value=[Summary.Value(tag='test/accuracy', simple_value=accuracy)]), global_step=epoch)
+            writer.add_summary(Summary(value=[
+                Summary.Value(tag='test/accuracy', simple_value=accuracy),
+                ]), global_step=epoch)
 
-        epoch += 1
         # Save training checkpoints
         checkpoint = make_checkpoint(epoch, step, optimizer, net)
         torch.save(checkpoint, os.path.join(args.log_dir, 'model_%.4f_e%i.pt' % (accuracy, epoch)))
